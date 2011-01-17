@@ -6,7 +6,7 @@ env.user = 'brendan'
 
 def new_user(admin_username, admin_password):   
     env.user = 'root'
-    env.password = 'test.codebetter.comtx65bUXO4'
+    env.password = '[password]'
     
     # Create the admin group and add it to the sudoers file
     admin_group = 'admin'
