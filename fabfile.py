@@ -4,6 +4,21 @@ from fabric.contrib.files import *
 env.hosts = ['184.106.93.74']
 env.user = 'brendan'
 
+def deploy(dbpassword):
+    install_apache()
+    install_mysql(dbpassword)
+    install_phpmyadmin()
+    install_git()
+    create_database('wp_codebetter',
+                    'root',
+                    dbpassword,
+                    'dbuser',
+                    'dbpass')
+    copy_git_database('wp_codebetter', 'git://github.com/btompkins/CodeBetter.Com-MySql.git')
+    install_mail()
+    install_ftp()
+    setup_website('codebetter.com')
+    
 def new_user(admin_username, admin_password):   
     env.user = 'root'
     env.password = 'test.codebetter.comtx65bUXO4'
@@ -59,6 +74,40 @@ def install_phpmyadmin():
     runcmd('/etc/init.d/apache2 restart')
     # Now you can point your browser to: http://domain/phpmyadmin    
 
+def install_git():
+    runcmd('apt-get -y install git-core')
+
+def create_database(database_name, root_user, root_password, new_user,
+                    new_user_password):
+    runcmd('mysql --user={root} --password={password} --execute="create '
+           'database {database}"'.format(root=root_user,
+                                         password=root_password,
+                                         database=database_name))
+    runcmd('mysql --user={root} --password={password} --execute="CREATE USER '
+           '\'{user}\' IDENTIFIED BY \'{userpass}\'"'
+           .format(root=root_user,
+                   password=root_password,
+                   user=new_user,
+                   userpass=new_user_password))
+    runcmd('mysql --user={root} --password={password} '
+           '--execute="GRANT ALL ON {database}.* TO '
+           '\'{user}\'@\'localhost\' IDENTIFIED BY \'{userpass}\'"'
+           .format(root=root_user,
+                   password=root_password,
+                   database=database_name,
+                   user=new_user,
+                   userpass=new_user_password))
+    runcmd('mysql --user={root} --password={password} '
+           '--execute="FLUSH PRIVILEGES"'
+           .format(root=root_user,
+                   password=root_password))
+
+def copy_git_database(local_database_name, repository_uri):
+    with cd('/var/lib/mysql/{database}'.format(database=local_database_name)):
+        sed('/etc/ssh/ssh_config', '#   StrictHostKeyChecking ask', 'StrictHostKeyChecking no', use_sudo=True)        
+        runcmd('rm -r *.*')
+        runcmd('git clone {repo} .'.format(repo=repository_uri,database=local_database_name))
+
 def install_mail():
     runcmd('DEBIAN_FRONTEND=noninteractive apt-get -y install postfix')
 
@@ -85,13 +134,16 @@ def setup_website(domain_name):
     append(['<IfModule mod_rewrite.c>',
         '   RewriteLog "/var/log/apache2/rewrite.log"',
         '   RewriteLogLevel 1',
-        '   RewriteMap rewritemap txt:/var/www/{domain}/permalinkmap.txt'.format(domain=domain_name),
+        '   RewriteMap rewritemap txt:/var/www/{domain}/permalinkmap.txt'
+            .format(domain=domain_name),
         '   LimitInternalRecursion 5',
         '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
-                      
-def install_git():
-    runcmd('apt-get -y install git-core')
+    runcmd('/etc/init.d/apache2 restart')
 
+def copy_git_website(domain_name, repository_uri):
+    with cd('/var/www/{domain}'.format(domain=domain_name)):
+        runcmd('git clone {repo} .'.format(repo=repository_uri))
+        runcmd('/etc/init.d/apache2 restart')
     
 # Helpers    
 def runcmd(arg):
