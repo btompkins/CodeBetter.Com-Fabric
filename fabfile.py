@@ -163,7 +163,16 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
     with cd('/var/www/'):
         runcmd('chown www-data {domain} -fR'.format(domain=domain_name))
         runcmd('/etc/init.d/apache2 restart')
-    
+
+def install_nginx():
+        runcmd('echo "deb http://ppa.launchpad.net/nginx/stable/ubuntu '
+               '$(lsb_release -cs) main" > '
+               '/etc/apt/sources.list.d/nginx-stable-$(lsb_release -cs).list')
+        runcmd('apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C300EE8C')
+        runcmd('apt-get update')
+        runcmd('apt-get -y install nginx')
+
+
 # Helpers    
 def runcmd(arg):
     if env.user != "root":
