@@ -4,24 +4,31 @@ from fabric.contrib.files import *
 env.hosts = ['184.106.93.74']
 env.user = 'brendan'
 
-def deploy(dbpassword):
+def deploy_all():
     install_apache()
-    install_mysql(dbpassword)
+    install_mysql('bbb123')
     install_phpmyadmin()
     install_git()
     create_database('wp_codebetter',
                     'root',
-                    dbpassword,
+                    'bbb123',
                     'dbuser',
                     'dbpass')
-    copy_git_database('wp_codebetter', 'git://github.com/btompkins/CodeBetter.Com-MySql.git')
+    
+    copy_git_database('wp_codebetter',
+                      'git://github.com/btompkins/CodeBetter.Com-MySql.git')
     install_mail()
     install_ftp()
     setup_website('codebetter.com')
+    copy_git_website('codebetter.com',
+                     'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
+                     'wp_codebetter',
+                     'dbuser',
+                     'dbpass')
     
 def new_user(admin_username, admin_password):   
     env.user = 'root'
-    env.password = '[password]'
+    env.password = 'test.codebetter.comtx65bUXO4'
     
     # Create the admin group and add it to the sudoers file
     admin_group = 'admin'
@@ -104,9 +111,11 @@ def create_database(database_name, root_user, root_password, new_user,
 
 def copy_git_database(local_database_name, repository_uri):
     with cd('/var/lib/mysql/{database}'.format(database=local_database_name)):
-        sed('/etc/ssh/ssh_config', '#   StrictHostKeyChecking ask', 'StrictHostKeyChecking no', use_sudo=True)        
+        sed('/etc/ssh/ssh_config', '#   StrictHostKeyChecking ask',
+            'StrictHostKeyChecking no', use_sudo=True)        
         runcmd('rm -r *.*')
-        runcmd('git clone {repo} .'.format(repo=repository_uri,database=local_database_name))
+        runcmd('git clone {repo} .'.format(repo=repository_uri,
+                                           database=local_database_name))
 
 def install_mail():
     runcmd('DEBIAN_FRONTEND=noninteractive apt-get -y install postfix')
@@ -140,9 +149,19 @@ def setup_website(domain_name):
         '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')
 
-def copy_git_website(domain_name, repository_uri):
+def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password):
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
+        sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+            'DATABASE_NAME', database_name, use_sudo=True)
+        sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+            'DATABASE_USER', database_user, use_sudo=True)
+        sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+            'DATABASE_PASSWORD', database_password, use_sudo=True)
+        sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+            'SITE_DOMAIN', domain_name, use_sudo=True)
+    with cd('/var/www/'):
+        runcmd('chown www-data {domain} -fR'.format(domain=domain_name))
         runcmd('/etc/init.d/apache2 restart')
     
 # Helpers    

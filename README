@@ -1,0 +1,4 @@
+Fabric scripts to setup CodeBetter.Com on an base Ubuntu install.
+Working against Ubuntu 10.04
+
+For Fabric see http://docs.fabfile.org/0.9.3/
