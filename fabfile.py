@@ -19,12 +19,14 @@ def deploy_all():
                       'git://github.com/btompkins/CodeBetter.Com-MySql.git')
     install_mail()
     install_ftp()
-    setup_website('codebetter.com')
+    setup_website_as_upstream_server('codebetter.com')
     copy_git_website('codebetter.com',
                      'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
                      'wp_codebetter',
                      'dbuser',
                      'dbpass')
+    install_nginx()
+    configure_nginx()
     
 def new_user(admin_username, admin_password):   
     env.user = 'root'
@@ -149,6 +151,27 @@ def setup_website(domain_name):
         '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')
 
+def setup_website_as_upstream_server(domain_name):
+    runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
+    runcmd('rm /etc/apache2/sites-enabled/000-default')
+    upload_template('.\\apache-default-upstream-proxy.txt'.format(
+        domain=domain_name), '/etc/apache2/sites-enabled/{domain}'.format(
+        domain=domain_name), use_sudo=True)
+    sed('/etc/apache2/sites-enabled/{domain}'.format(
+        domain=domain_name), 'DOMAIN_NAME', domain_name, use_sudo=True,)
+    runcmd('rm /etc/apache2/sites-enabled/*.bak')
+
+  # Note that the following will only work once!
+    append(['<IfModule mod_rewrite.c>',
+        '   RewriteLog "/var/log/apache2/rewrite.log"',
+        '   RewriteLogLevel 1',
+        '   RewriteMap rewritemap txt:/var/www/{domain}/permalinkmap.txt'
+            .format(domain=domain_name),
+        '   LimitInternalRecursion 5',
+        '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
+
+    runcmd('/etc/init.d/apache2 restart')
+
 def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password):
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
@@ -165,14 +188,17 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
         runcmd('/etc/init.d/apache2 restart')
 
 def install_nginx():
-        runcmd('echo "deb http://ppa.launchpad.net/nginx/stable/ubuntu '
-               '$(lsb_release -cs) main" > '
-               '/etc/apt/sources.list.d/nginx-stable-$(lsb_release -cs).list')
-        runcmd('apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C300EE8C')
-        runcmd('apt-get update')
-        runcmd('apt-get -y install nginx')
+    runcmd('echo "deb http://ppa.launchpad.net/nginx/stable/ubuntu '
+        '$(lsb_release -cs) main" > '
+        '/etc/apt/sources.list.d/nginx-stable-$(lsb_release -cs).list')
+    runcmd('apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C300EE8C')
+    runcmd('apt-get update')
+    runcmd('apt-get -y install nginx')
 
-
+def configure_nginx():
+    upload_template('.\\nginx-default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
+    runcmd('/etc/init.d/nginx restart')
+    
 # Helpers    
 def runcmd(arg):
     if env.user != "root":

@@ -1,0 +1,85 @@
+# And then in the file /etc/nginx/sites-enabled/default
+# This file shows you a few ways you can tweak your caching policies by inspecting URLs.
+# The most important rule is to leave admin-looking URLs uncached, otherwise you won't be able to log in.
+# From there, please feel free to set longer or shorter cache times based on your particular traffic.
+
+# set some parameters: two levels deep for the filesystem
+# set the name of the cache to "staticfilecache", giving it a maximum cache time of 3 hours and 500meg in size.
+proxy_cache_path  /var/lib/nginx/cache  levels=1:2   keys_zone=staticfilecache:180m  max_size=500m;
+proxy_temp_path /var/lib/nginx/proxy;
+proxy_connect_timeout 30;
+proxy_read_timeout 120;
+proxy_send_timeout 120;
+
+#IMPORTANT - this sets the basic cache key that's used in the static file cache.
+proxy_cache_key "$scheme://$host$request_uri";
+
+upstream wordpressapache {
+        #The upstream apache server. You can have many of these and weight them accordingly,
+        #allowing nginx to function as a caching load balancer (oh my. Awesomeness abounds.)
+        server 127.0.0.1:8200 weight=1 fail_timeout=120s;
+}
+
+server {
+        #Only cache 200 responses, and for a default of 20 minutes.
+        proxy_cache_valid 200 20m;
+
+        #Probably not needed, as the proxy will pass back the host in "proxy_set_header"
+        server_name codebetter.tld;
+
+        # "combined" matches apache's concept of "combined". Neat.
+        access_log  /var/log/apache2/nginx-access.log combined;
+		
+        # Set the real IP.
+        proxy_set_header X-Real-IP  $remote_addr;
+
+        # Set the hostname
+        proxy_set_header Host $host;
+
+        #Set the forwarded-for header.
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        location / {
+                        # If logged in, don't cache.
+                        if ($http_cookie ~* "comment_author_|wordpress_(?!test_cookie)|wp-postpass_" ) {
+                                set $do_not_cache 1;
+                        }
+                        proxy_cache_key "$scheme://$host$request_uri $do_not_cache";
+                        proxy_cache staticfilecache;
+                        proxy_pass http://wordpressapache;
+        }
+
+        location ~* wp\-.*\.php|wp\-admin {
+                        # Don't static file cache admin-looking things.
+                        proxy_pass http://wordpressapache;
+        }
+
+        location ~* \.(jpg|png|gif|jpeg|css|js|mp3|wav|swf|mov|doc|pdf|xls|ppt|docx|pptx|xlsx)$ {
+                        # Cache static-looking files for 120 minutes, setting a 10 day expiry time in the HTTP header,
+                        # whether logged in or not (may be too heavy-handed).
+                        proxy_cache_valid 200 120m;
+                        expires 864000;
+                        proxy_pass http://wordpressapache;
+                        proxy_cache staticfilecache;
+        }
+
+        location ~* \/[^\/]+\/(feed|\.xml)\/? {
+                        # Cache RSS looking feeds for 45 minutes unless logged in.
+                        if ($http_cookie ~* "comment_author_|wordpress_(?!test_cookie)|wp-postpass_" ) {
+                                set $do_not_cache 1;
+                        }
+                        proxy_cache_key "$scheme://$host$request_uri $do_not_cache";
+                        proxy_cache_valid 200 45m;
+                        proxy_cache staticfilecache;
+                        proxy_pass http://wordpressapache;
+        }
+
+        location = /50x.html {
+                root   /var/www/nginx-default;
+        }
+
+        # No access to .htaccess files.
+        location ~ /\.ht {
+                deny  all;
+        }
+}
