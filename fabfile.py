@@ -1,36 +1,77 @@
 from fabric.api import *
 from fabric.contrib.files import *
 
-env.hosts = ['184.106.93.74']
+env.roledefs = {
+    'prx'   : ['184.106.69.38'],
+    'app'   : ['184.106.69.20', '184.106.69.92'],
+    'db'    : ['184.106.69.141']
+}
+
 env.user = 'brendan'
 
-def deploy_all():
+@roles('prx','app','db')
+def base_host_setup():
+    env.user = 'root'    
+    #Create local sudoer user, then upgrade Ubuntu.
+    prompt('Specify new username: ', 'new_username')
+    prompt('Speciry new password: ', 'new_password')
+    new_user(env.new_username,env.new_password)
+    upgrade_host()
+
+@roles('app')
+def deploy_appservers():
+    """
+    Deploy apache, mail, ftp, and make apache listen on
+    port 8200.  Then deploy our Wordpress install, which
+    has already been skinned setup, and stored at github.
+    """
+    prompt('Specify db password: ', 'new_password')
     install_apache()
-    install_mysql('bbb123')
-    install_phpmyadmin()
     install_git()
-    create_database('wp_codebetter',
-                    'root',
-                    'bbb123',
-                    'dbuser',
-                    'dbpass')
-    
-    copy_git_database('wp_codebetter',
-                      'git://github.com/btompkins/CodeBetter.Com-MySql.git')
     install_mail()
     install_ftp()
-    setup_website_as_upstream_server('codebetter.com')
+    setup_website_as_upstream_server('codebetter.com',
+                                     env.host_string,
+                                     env.roledefs['prx'][0])
     copy_git_website('codebetter.com',
                      'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
                      'wp_codebetter',
                      'dbuser',
-                     'dbpass')
+                     env.new_password,
+                     env.roledefs['db'][0])
+
+@roles('prx')
+def deploy_reverse_proxy():
+    """
+    Deploy NGINX and setup as a front end
+    reverse proxy, loadbalacing between our app servers.
+    """
     install_nginx()
-    configure_nginx()
+    configure_nginx(env.roledefs['app'][0])
+    configure_nginx(env.roledefs['app'][1])
+
+@roles('db')
+def deploy_dbserver():
+    """
+    Setup apache, mysql, and phpmyadmin, git
+    and create our databse, and restore from github.
+    """
+    prompt('Specify db password: ', 'new_password')
+    install_apache()
+    install_mysql(env.new_password)
+    install_phpmyadmin()
+    install_git()
+    create_database('wp_codebetter',
+                    'root',
+                    env.new_password,
+                    'dbuser',
+                    env.new_password)    
+    copy_git_database('wp_codebetter',
+                      'git://github.com/btompkins/CodeBetter.Com-MySql.git')
+    setup_mysql_remote_access('184.106.0.0/16', env.host_string)
     
 def new_user(admin_username, admin_password):   
     env.user = 'root'
-    env.password = 'test.codebetter.comtx65bUXO4'
     
     # Create the admin group and add it to the sudoers file
     admin_group = 'admin'
@@ -50,11 +91,11 @@ def new_user(admin_username, admin_password):
         username=admin_username,
         password=admin_password))
     
-def upgrade_hosts():
+def upgrade_host():
     runcmd('apt-get -y update && apt-get -y dist-upgrade ')
 
 def install_apache():
-    runcmd('apt-get -y install apache2 php5 libapache2-mod-php5')
+    runcmd('apt-get -y install apache2 php5 libapache2-mod-php5 mysql-client php5-mysql')
     runcmd('a2enmod rewrite')
     runcmd('a2enmod deflate')
     runcmd('a2enmod expires')
@@ -64,7 +105,8 @@ def install_apache():
             '# Customizations', 'Header unset ETag',
             'FileETag None',
             'ExpiresActive On',
-            'ExpiresDefault "access plus 7 days"'], '/etc/apache2/apache2.conf', use_sudo=True)
+            'ExpiresDefault "access plus 7 days"'], '/etc/apache2/apache2.conf',
+           use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')    
           
 def install_mysql(mysql_root_password):
@@ -74,7 +116,7 @@ def install_mysql(mysql_root_password):
     runcmd('echo "mysql-server mysql-server/root_password_again select ' 
            '{password}" | debconf-set-selections'.format(
         password=mysql_root_password))
-    runcmd('apt-get -y install mysql-server mysql-client php5-mysql')
+    runcmd('apt-get -y install mysql-server')
 
 def install_phpmyadmin():
     runcmd('DEBIAN_FRONTEND=noninteractive apt-get install -y phpmyadmin')
@@ -100,7 +142,7 @@ def create_database(database_name, root_user, root_password, new_user,
                    userpass=new_user_password))
     runcmd('mysql --user={root} --password={password} '
            '--execute="GRANT ALL ON {database}.* TO '
-           '\'{user}\'@\'localhost\' IDENTIFIED BY \'{userpass}\'"'
+           '\'{user}\'@\'%\' IDENTIFIED BY \'{userpass}\'"'
            .format(root=root_user,
                    password=root_password,
                    database=database_name,
@@ -151,16 +193,20 @@ def setup_website(domain_name):
         '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')
 
-def setup_website_as_upstream_server(domain_name):
+def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
+    runcmd('apt-get -y install libapache2-mod-rpaf')
     runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
     runcmd('rm /etc/apache2/sites-enabled/000-default')
-    upload_template('.\\apache-default-upstream-proxy.txt'.format(
-        domain=domain_name), '/etc/apache2/sites-enabled/{domain}'.format(
-        domain=domain_name), use_sudo=True)
+    upload_template('.\\apache-default-upstream-proxy.txt',
+                    '/etc/apache2/sites-enabled/{domain}'.format(
+                    domain=domain_name), use_sudo=True)
     sed('/etc/apache2/sites-enabled/{domain}'.format(
         domain=domain_name), 'DOMAIN_NAME', domain_name, use_sudo=True,)
+    sed('/etc/apache2/sites-enabled/{domain}'.format(
+        domain=domain_name), 'IP_ADDRESS', ip_address, use_sudo=True,)
+    sed('/etc/apache2/sites-enabled/{domain}'.format(
+        domain=domain_name), 'REVERSE_PROXY_IP', reverse_proxy_ip, use_sudo=True,)
     runcmd('rm /etc/apache2/sites-enabled/*.bak')
-
   # Note that the following will only work once!
     append(['<IfModule mod_rewrite.c>',
         '   RewriteLog "/var/log/apache2/rewrite.log"',
@@ -169,10 +215,13 @@ def setup_website_as_upstream_server(domain_name):
             .format(domain=domain_name),
         '   LimitInternalRecursion 5',
         '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
-
+    comment('/etc/apache2/ports.conf','NameVirtualHost \*:80', use_sudo=True)
+    comment('/etc/apache2/ports.conf','Listen 80', use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')
 
-def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password):
+
+def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password,
+                     database_host):
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
@@ -181,6 +230,8 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
             'DATABASE_USER', database_user, use_sudo=True)
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
             'DATABASE_PASSWORD', database_password, use_sudo=True)
+        sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+            'DATABASE_HOST', database_host, use_sudo=True)        
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
             'SITE_DOMAIN', domain_name, use_sudo=True)
     with cd('/var/www/'):
@@ -194,11 +245,28 @@ def install_nginx():
     runcmd('apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C300EE8C')
     runcmd('apt-get update')
     runcmd('apt-get -y install nginx')
-
-def configure_nginx():
     upload_template('.\\nginx-default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
-    runcmd('/etc/init.d/nginx restart')
     
+def configure_nginx(upstream_server_ip):    
+    uncomment('/etc/nginx/sites-available/default',
+              '#NEW_UPSTREAM_SERVER', use_sudo=True)
+    sed('/etc/nginx/sites-available/default',
+        'NEW_UPSTREAM_SERVER',
+        'server {server_ip}:8200 weight=1 fail_timeout=30s;#NEW_UPSTREAM_SERVER'
+        .format(server_ip=upstream_server_ip), use_sudo=True)
+    runcmd('rm /etc/nginx/sites-available/*.bak')
+    runcmd('/etc/init.d/nginx restart')
+
+
+def setup_mysql_remote_access(remote_range, bind_address):
+    comment('/etc/mysql/my.cnf', 'skip-networking', use_sudo=True)
+    sed('/etc/mysql/my.cnf', 'bind-address		= 127.0.0.1',
+        'bind-address    = {address}'.format(address=bind_address), use_sudo=True)
+    runcmd('restart mysql')
+    runcmd('iptables -A INPUT -i eth0 -s {remote} -p tcp --destination-port 3306 -j ACCEPT'
+           .format(remote=remote_range))
+    runcmd('iptables-save')
+
 # Helpers    
 def runcmd(arg):
     if env.user != "root":

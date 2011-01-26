@@ -8,9 +8,9 @@
 # your frontend proxy.
 Listen 8200
 
-NameVirtualHost 127.0.0.1:8200
+NameVirtualHost IP_ADDRESS:8200
 
-<VirtualHost 127.0.0.1:8200>
+<VirtualHost IP_ADDRESS:8200>
         ServerName www.DOMAIN_NAME
         RewriteEngine on
         DocumentRoot /var/www/DOMAIN_NAME
@@ -22,4 +22,12 @@ NameVirtualHost 127.0.0.1:8200
         RewriteCond %{HTTP_REFERER} !.*blog.example.org.* [OR]
         RewriteCond %{HTTP_USER_AGENT} ^$
         RewriteRule (.*) - [R=403,L]
+
+	<IfModule mod_rpaf.c>
+		RPAFenable On
+		RPAFsethostname On
+		RPAFproxy_ips REVERSE_PROXY_IP
+	</IfModule>
+
+
 </VirtualHost>

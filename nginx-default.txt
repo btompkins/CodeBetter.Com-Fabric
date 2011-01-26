@@ -17,7 +17,8 @@ proxy_cache_key "$scheme://$host$request_uri";
 upstream wordpressapache {
         #The upstream apache server. You can have many of these and weight them accordingly,
         #allowing nginx to function as a caching load balancer (oh my. Awesomeness abounds.)
-        server 127.0.0.1:8200 weight=1 fail_timeout=120s;
+	#NEW_UPSTREAM_SERVER
+
 }
 
 server {
@@ -28,7 +29,7 @@ server {
         server_name codebetter.tld;
 
         # "combined" matches apache's concept of "combined". Neat.
-        access_log  /var/log/apache2/nginx-access.log combined;
+        access_log  /var/log/nginx/nginx-access.log combined;
 		
         # Set the real IP.
         proxy_set_header X-Real-IP  $remote_addr;
