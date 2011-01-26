@@ -9,7 +9,7 @@ env.roledefs = {
 
 env.user = 'brendan'
 
-@roles('prx','app','db')
+@roles('prx')
 def base_host_setup():
     env.user = 'root'    
     #Create local sudoer user, then upgrade Ubuntu.
@@ -92,6 +92,8 @@ def new_user(admin_username, admin_password):
         password=admin_password))
     
 def upgrade_host():
+    runcmd('echo "US/Eastern" | sudo tee /etc/timezone')
+    runcmd('dpkg-reconfigure --frontend noninteractive tzdata')
     runcmd('apt-get -y update && apt-get -y dist-upgrade ')
 
 def install_apache():
@@ -101,12 +103,6 @@ def install_apache():
     runcmd('a2enmod expires')
     runcmd('a2enmod headers')
     runcmd('sh -c "echo \'<?php phpinfo( ); ?>\'  > /var/www/info.php"')
-    append(['',
-            '# Customizations', 'Header unset ETag',
-            'FileETag None',
-            'ExpiresActive On',
-            'ExpiresDefault "access plus 7 days"'], '/etc/apache2/apache2.conf',
-           use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')    
           
 def install_mysql(mysql_root_password):
@@ -207,14 +203,27 @@ def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
     sed('/etc/apache2/sites-enabled/{domain}'.format(
         domain=domain_name), 'REVERSE_PROXY_IP', reverse_proxy_ip, use_sudo=True,)
     runcmd('rm /etc/apache2/sites-enabled/*.bak')
-  # Note that the following will only work once!
-    append(['<IfModule mod_rewrite.c>',
-        '   RewriteLog "/var/log/apache2/rewrite.log"',
-        '   RewriteLogLevel 1',
-        '   RewriteMap rewritemap txt:/var/www/{domain}/permalinkmap.txt'
+    sed('/etc/apache2/apache2.conf', 'MaxClients          150', 'MaxClients          20', use_sudo=True)    
+    sed('/etc/apache2/apache2.conf', 'MaxRequestsPerChild   0', 'MaxRequestsPerChild   2000', use_sudo=True)
+    sed('/etc/apache2/apache2.conf', 'Timeout 600', 'Timeout 30', use_sudo=True)
+    append(['',
+            '# Customizations',
+            'Header unset ETag',
+            'ExtendedStatus Off',
+            'FileETag None',
+            'ExpiresActive On',
+            'ExpiresDefault "acc,ess plus 7 days"',
+            '<Directory />',
+            '   Options FollowSymLinks',
+            '   AllowOverride None',
+            '</Directory>'], '/etc/apache2/apache2.conf',
+            '<IfModule mod_rewrite.c>',
+            '   RewriteLog "/var/log/apache2/rewrite.log"',
+            '   RewriteLogLevel 1',
+            '   RewriteMap rewritemap txt:/var/www/{domain}/permalinkmap.txt'
             .format(domain=domain_name),
-        '   LimitInternalRecursion 5',
-        '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
+            '   LimitInternalRecursion 5',
+            '</IfModule>'], '/etc/apache2/apache2.conf', use_sudo=True)
     comment('/etc/apache2/ports.conf','NameVirtualHost \*:80', use_sudo=True)
     comment('/etc/apache2/ports.conf','Listen 80', use_sudo=True)
     runcmd('/etc/init.d/apache2 restart')
@@ -248,10 +257,8 @@ def install_nginx():
     upload_template('.\\nginx-default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
     
 def configure_nginx(upstream_server_ip):    
-    uncomment('/etc/nginx/sites-available/default',
-              '#NEW_UPSTREAM_SERVER', use_sudo=True)
     sed('/etc/nginx/sites-available/default',
-        'NEW_UPSTREAM_SERVER',
+        '#NEW_UPSTREAM_SERVER',
         'server {server_ip}:8200 weight=1 fail_timeout=30s;#NEW_UPSTREAM_SERVER'
         .format(server_ip=upstream_server_ip), use_sudo=True)
     runcmd('rm /etc/nginx/sites-available/*.bak')
