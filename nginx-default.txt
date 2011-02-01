@@ -23,6 +23,7 @@ upstream wordpressapache {
 server {
         #Only cache 200 responses, and for a default of 20 minutes.
         proxy_cache_valid 200 301 302 10m;
+	proxy_cache_use_stale error timeout updating;
 
         #Probably not needed, as the proxy will pass back the host in "proxy_set_header"
         server_name codebetter.tld;

@@ -11,6 +11,20 @@ env.roledefs = {
 env.user = 'brendan'
 
 @roles('prx','app','db','munin')
+def upgrade_task_manager():
+    runcmd('apt-get -y install htop')
+
+@roles('app')
+def update_codebetter_git_website():
+    update_git_website('codebetter.com',
+    'git://github.com/btompkins/CodeBetter.Com-Wordpress.git')
+
+
+def update_git_website(domain_name, repository_uri):
+    with cd('/var/www/{domain}'.format(domain=domain_name)):
+        runcmd('git update {repo} master'.format(repo=repository_uri))
+
+@roles('prx','app','db','munin')
 def base_host_setup():
     env.user = 'root'    
     #Create local sudoer user, then upgrade Ubuntu.
@@ -19,13 +33,13 @@ def base_host_setup():
     new_user(env.new_username, env.new_password)
     upgrade_host()
 
-@roles('prx','app','db','munin')
+@roles('db')
 def change_my_password():
     prompt('Specify new password: ', 'new_password')
     runcmd('echo {un}:{pw} | chpasswd'.format(un=env.user, pw=env.new_password))
     
 @roles('app')
-def deploy_appservers():
+def deploy_app_servers():
     """
     Deploy apache, mail, ftp, and make apache listen on
     port 8200.  Then deploy our Wordpress install, which
@@ -65,7 +79,7 @@ def deploy_reverse_proxy():
     runcmd('restart munin-node')
     
 @roles('db')
-def deploy_dbserver():
+def deploy_db_server():
     """
     Setup apache, mysql, and phpmyadmin, git
     and create our databse, and restore from github.
@@ -311,6 +325,11 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
         runcmd('chown www-data {domain} -fR'.format(domain=domain_name))
         runcmd('/etc/init.d/apache2 restart')
 
+
+def update_git_website(domain_name, repository_uri):
+    with cd('/var/www/{domain}'.format(domain=domain_name)):
+        runcmd('git pull {repo} master'.format(repo=repository_uri))
+        
 def install_nginx():
     runcmd('echo "deb http://ppa.launchpad.net/nginx/stable/ubuntu '
         '$(lsb_release -cs) main" > '
@@ -326,7 +345,7 @@ def configure_nginx_proxy():
 def configure_nginx_proxy_upstream(upstream_server_ip):    
     sed('/etc/nginx/sites-available/default',
         '#NEW_UPSTREAM_SERVER',
-        'server {server_ip}:8200 weight=1 fail_timeout=30s;#NEW_UPSTREAM_SERVER'
+        'server {server_ip}:8200 weight=1 fail_timeout=5s;#NEW_UPSTREAM_SERVER'
         .format(server_ip=upstream_server_ip), use_sudo=True)
     runcmd('rm /etc/nginx/sites-available/*.bak')
     runcmd('/etc/init.d/nginx restart')
