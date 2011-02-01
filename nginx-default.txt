@@ -17,19 +17,26 @@ proxy_cache_key "$scheme://$host$request_uri";
 upstream wordpressapache {
         #The upstream apache server. You can have many of these and weight them accordingly,
         #allowing nginx to function as a caching load balancer (oh my. Awesomeness abounds.)
-	#NEW_UPSTREAM_SERVER
-
+		#NEW_UPSTREAM_SERVER
 }
 
 server {
         #Only cache 200 responses, and for a default of 20 minutes.
-        proxy_cache_valid 200 20m;
+        proxy_cache_valid 200 301 302 10m;
 
         #Probably not needed, as the proxy will pass back the host in "proxy_set_header"
         server_name codebetter.tld;
 
-        # "combined" matches apache's concept of "combined". Neat.
-        access_log  /var/log/nginx/nginx-access.log combined;
+        # Useful format for entries in your cache log
+		log_format cache '***$time_local '
+			'$upstream_cache_status '
+			'Cache-Control: $upstream_http_cache_control '
+			 'Expires: $upstream_http_expires '
+			 '"$scheme://$host" "$request" ($status) '
+			 '"$http_user_agent" ';
+			 
+		# Where your cache log is stored. Make sure to include the 'cache' at the very end
+		access_log /var/log/nginx/cache.log cache;
 		
         # Set the real IP.
         proxy_set_header X-Real-IP  $remote_addr;
