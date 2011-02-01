@@ -4,20 +4,26 @@ from fabric.contrib.files import *
 env.roledefs = {
     'prx'   : ['184.106.69.38'],
     'app'   : ['184.106.69.20', '184.106.69.92'],
-    'db'    : ['184.106.69.141']
+    'db'    : ['184.106.69.141'],
+    'munin' : ['184.106.83.76']
 }
 
 env.user = 'brendan'
 
-@roles('prx')
+@roles('prx','app','db','munin')
 def base_host_setup():
     env.user = 'root'    
     #Create local sudoer user, then upgrade Ubuntu.
     prompt('Specify new username: ', 'new_username')
     prompt('Speciry new password: ', 'new_password')
-    new_user(env.new_username,env.new_password)
+    new_user(env.new_username, env.new_password)
     upgrade_host()
 
+@roles('prx','app','db','munin')
+def change_my_password():
+    prompt('Specify new password: ', 'new_password')
+    runcmd('echo {un}:{pw} | chpasswd'.format(un=env.user, pw=env.new_password))
+    
 @roles('app')
 def deploy_appservers():
     """
@@ -25,11 +31,11 @@ def deploy_appservers():
     port 8200.  Then deploy our Wordpress install, which
     has already been skinned setup, and stored at github.
     """
-    prompt('Specify db password: ', 'new_password')
+    prompt('Specify db password: ', 'db_password')
     install_apache()
     install_git()
     install_mail()
-    install_ftp()
+    install_ftp()    
     setup_website_as_upstream_server('codebetter.com',
                                      env.host_string,
                                      env.roledefs['prx'][0])
@@ -37,8 +43,13 @@ def deploy_appservers():
                      'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
                      'wp_codebetter',
                      'dbuser',
-                     env.new_password,
+                     env.db_password,
                      env.roledefs['db'][0])
+    install_munin_node()
+    runcmd('ln -s /usr/share/munin/plugins/apache_accesses /etc/munin/plugins/apache_accesses')
+    runcmd('ln -s /usr/share/munin/plugins/apache_processes /etc/munin/plugins/apache_processes')
+    runcmd('ln -s /usr/share/munin/plugins/apache_volume /etc/munin/plugins/apache_volume')
+    runcmd('restart munin-node')
 
 @roles('prx')
 def deploy_reverse_proxy():
@@ -47,9 +58,12 @@ def deploy_reverse_proxy():
     reverse proxy, loadbalacing between our app servers.
     """
     install_nginx()
-    configure_nginx(env.roledefs['app'][0])
-    configure_nginx(env.roledefs['app'][1])
-
+    configure_nginx_proxy()
+    configure_nginx_proxy_upstream(env.roledefs['app'][0])
+    configure_nginx_proxy_upstream(env.roledefs['app'][1])
+    install_munin_node()
+    runcmd('restart munin-node')
+    
 @roles('db')
 def deploy_dbserver():
     """
@@ -69,7 +83,53 @@ def deploy_dbserver():
     copy_git_database('wp_codebetter',
                       'git://github.com/btompkins/CodeBetter.Com-MySql.git')
     setup_mysql_remote_access('184.106.0.0/16', env.host_string)
-    
+    install_munin_node()
+    runcmd('ln -s /usr/share/munin/plugins/mysql_bytes /etc/munin/plugins/mysql_bytes')
+    runcmd('ln -s /usr/share/munin/plugins/mysql_queries /etc/munin/plugins/mysql_queries')
+    runcmd('ln -s /usr/share/munin/plugins/mysql_slowqueries /etc/munin/plugins/mysql_slowqueries')
+    runcmd('ln -s /usr/share/munin/plugins/mysql_threads /etc/munin/plugins/mysql_threads')
+    runcmd('restart munin-node')
+
+@roles('munin')
+def install_munin_server():
+    install_nginx()
+    runcmd('apt-get -y install munin munin-node munin-plugins-extra')
+    sed('/etc/nginx/sites-available/default','usr/share/nginx', 'var/cache/munin', use_sudo=True)
+    sed('/etc/nginx/sites-available/default','localhost', 'munin.codebetter.com', use_sudo=True)    
+    sed('/etc/munin/munin.conf','localhost.localdomain', 'munin.codebetter.com',use_sudo=True)
+    append(['',
+            '[nginx.codebetter.com]',
+            'address {address}'.format(address=env.roledefs['prx'][0]),
+            'use_node_name yes'],
+           '/etc/munin/munin.conf', use_sudo=True)           
+    append(['',            
+            '[app1.codebetter.com]',
+            'address {address}'.format(address=env.roledefs['app'][0]),
+            ' use_node_name yes'],
+           '/etc/munin/munin.conf', use_sudo=True)
+    append(['',            
+            '[app2.codebetter.com]',
+            'address {address}'.format(address=env.roledefs['app'][1]),
+            '  use_node_name yes'],
+           '/etc/munin/munin.conf', use_sudo=True)
+    append(['',            
+            '[mysql.codebetter.com]',
+            'address {address}'.format(address=env.roledefs['db'][0]),
+            '   use_node_name yes'],
+           '/etc/munin/munin.conf', use_sudo=True)
+
+    runcmd('/etc/init.d/nginx restart')
+
+def install_munin_node():
+    runcmd('apt-get -y install munin-node munin-plugins-extra libwww-perl')
+    append(['host_name {hostname}  # Hostname of the node machine'.format(hostname=env.host_string),
+            'allow {mainserver}   # IP address of the central server'.format(mainserver=env.roledefs['munin'][0]),
+            'host {hostname}    # Host IP address'.format(hostname=env.host_string)],
+            '/etc/munin/munin-node.conf',
+           use_sudo=True)
+    runcmd('/etc/init.d/munin-node restart')                                                           
+
+           
 def new_user(admin_username, admin_password):   
     env.user = 'root'
     
@@ -203,9 +263,14 @@ def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
     sed('/etc/apache2/sites-enabled/{domain}'.format(
         domain=domain_name), 'REVERSE_PROXY_IP', reverse_proxy_ip, use_sudo=True,)
     runcmd('rm /etc/apache2/sites-enabled/*.bak')
-    sed('/etc/apache2/apache2.conf', 'MaxClients          150', 'MaxClients          20', use_sudo=True)    
-    sed('/etc/apache2/apache2.conf', 'MaxRequestsPerChild   0', 'MaxRequestsPerChild   2000', use_sudo=True)
-    sed('/etc/apache2/apache2.conf', 'Timeout 600', 'Timeout 30', use_sudo=True)
+    sed('/etc/apache2/apache2.conf', 'MaxClients          150',
+        'MaxClients          20',
+        use_sudo=True)    
+    sed('/etc/apache2/apache2.conf', 'MaxRequestsPerChild   0',
+        'MaxRequestsPerChild   2000',
+        use_sudo=True)
+    sed('/etc/apache2/apache2.conf', 'Timeout 600', 'Timeout 30',
+        use_sudo=True)
     append(['',
             '# Customizations',
             'Header unset ETag',
@@ -215,8 +280,7 @@ def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
             'ExpiresDefault "acc,ess plus 7 days"',
             '<Directory />',
             '   Options FollowSymLinks',
-            '   AllowOverride None',
-            '</Directory>'], '/etc/apache2/apache2.conf',
+            '</Directory>',
             '<IfModule mod_rewrite.c>',
             '   RewriteLog "/var/log/apache2/rewrite.log"',
             '   RewriteLogLevel 1',
@@ -254,9 +318,12 @@ def install_nginx():
     runcmd('apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C300EE8C')
     runcmd('apt-get update')
     runcmd('apt-get -y install nginx')
+
+def configure_nginx_proxy():
     upload_template('.\\nginx-default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
+#    upload_template('.\\nginx.conf.txt', '/etc/nginx/nginx.conf', use_sudo=True)
     
-def configure_nginx(upstream_server_ip):    
+def configure_nginx_proxy_upstream(upstream_server_ip):    
     sed('/etc/nginx/sites-available/default',
         '#NEW_UPSTREAM_SERVER',
         'server {server_ip}:8200 weight=1 fail_timeout=30s;#NEW_UPSTREAM_SERVER'
@@ -287,5 +354,6 @@ Thanks to
 
 http://www.howtoforge.com/ubuntu_debian_lamp_server
 http://serverfault.com/questions/122954/secure-method-of-changing-a-users-password-via-python-script-non-interactively
+http://danielbachhuber.com/2010/11/29/proxy-caching-wordpress-with-nginx/
 
 """
