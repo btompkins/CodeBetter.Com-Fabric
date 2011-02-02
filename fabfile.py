@@ -340,7 +340,7 @@ def install_nginx():
 
 def configure_nginx_proxy():
     upload_template('.\\nginx-default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
-#    upload_template('.\\nginx.conf.txt', '/etc/nginx/nginx.conf', use_sudo=True)
+    upload_template('.\\permalink.map', '/etc/nginx/sites-available/permalink.map', use_sudo=True)
     
 def configure_nginx_proxy_upstream(upstream_server_ip):    
     sed('/etc/nginx/sites-available/default',
