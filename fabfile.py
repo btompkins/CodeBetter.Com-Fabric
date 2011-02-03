@@ -10,6 +10,11 @@ env.roledefs = {
 
 env.user = 'brendan'
 
+@roles('app')
+def log_rotate_daily():
+    sed('/etc/logrotate.d/apache2', 'weekly', 'daily', use_sudo=True)
+
+
 @roles('prx','app','db','munin')
 def upgrade_task_manager():
     runcmd('apt-get -y install htop')
@@ -108,9 +113,12 @@ def deploy_db_server():
 def install_munin_server():
     install_nginx()
     runcmd('apt-get -y install munin munin-node munin-plugins-extra')
-    sed('/etc/nginx/sites-available/default','usr/share/nginx', 'var/cache/munin', use_sudo=True)
-    sed('/etc/nginx/sites-available/default','localhost', 'munin.codebetter.com', use_sudo=True)    
-    sed('/etc/munin/munin.conf','localhost.localdomain', 'munin.codebetter.com',use_sudo=True)
+    sed('/etc/nginx/sites-available/default','usr/share/nginx',
+        'var/cache/munin', use_sudo=True)
+    sed('/etc/nginx/sites-available/default','localhost',
+        'munin.codebetter.com', use_sudo=True)    
+    sed('/etc/munin/munin.conf','localhost.localdomain',
+        'munin.codebetter.com',use_sudo=True)
     append(['',
             '[nginx.codebetter.com]',
             'address {address}'.format(address=env.roledefs['prx'][0]),
@@ -230,7 +238,8 @@ def copy_git_database(local_database_name, repository_uri):
         runcmd('rm -r *.*')
         runcmd('git clone {repo} .'.format(repo=repository_uri,
                                            database=local_database_name))
-
+        runcmd('chown mysql *.* -fR')
+        
 def install_mail():
     runcmd('DEBIAN_FRONTEND=noninteractive apt-get -y install postfix')
 
