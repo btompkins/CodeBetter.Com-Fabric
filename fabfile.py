@@ -2,18 +2,24 @@ from fabric.api import *
 from fabric.contrib.files import *
 
 env.roledefs = {
-    'prx'   : ['184.106.69.38'],
-    'app'   : ['184.106.69.20', '184.106.69.92'],
-    'db'    : ['184.106.69.141'],
+    'prx'   : ['184.106.69.38'] ,
+    'app'   : ['184.106.69.20'  , #10.180.165.219
+               '184.106.69.92'] , #10.180.174.29
+    'nginx' : ['184.106.97.207'],
+    'db'    : ['184.106.69.141'], #10.180.175.32
     'munin' : ['184.106.83.76']
 }
+
+env['184.106.69.20'] = '10.180.165.219'
+env['184.106.69.92'] = '10.180.174.29'
+env['184.106.69.141'] = '10.180.175.32'
+env['184.106.97.207'] = '10.180.174.162'
 
 env.user = 'brendan'
 
 @roles('app')
 def log_rotate_daily():
     sed('/etc/logrotate.d/apache2', 'weekly', 'daily', use_sudo=True)
-
 
 @roles('prx','app','db','munin')
 def upgrade_task_manager():
@@ -23,7 +29,6 @@ def upgrade_task_manager():
 def update_codebetter_git_website():
     update_git_website('codebetter.com',
     'git://github.com/btompkins/CodeBetter.Com-Wordpress.git')
-
 
 def update_git_website(domain_name, repository_uri):
     with cd('/var/www/{domain}'.format(domain=domain_name)):
@@ -38,10 +43,58 @@ def base_host_setup():
     new_user(env.new_username, env.new_password)
     upgrade_host()
 
-@roles('db')
+@roles('nginx')
 def change_my_password():
     prompt('Specify new password: ', 'new_password')
     runcmd('echo {un}:{pw} | chpasswd'.format(un=env.user, pw=env.new_password))
+
+@roles('nginx')
+def deploy_app_servers_nginx():
+    prompt('Specify db password: ', 'db_password')  
+    install_nginx()
+    install_nginx_required_libs()
+    get_php_from_source()
+    install_git()
+    runcmd('mkdir /var/www')
+    copy_git_website('codebetter.com',
+                     'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
+                     'wp_codebetter',
+                     'dbuser',
+                     env.db_password,
+                     env[env.roledefs['db'][0]])
+    configure_nginx_as_upstream_server()
+    install_munin_node()
+    runcmd('restart munin-node')
+    
+
+def configure_nginx_as_upstream_server():
+    upload_template('.\\nginx-app\\default.txt', '/etc/nginx/sites-available/default', use_sudo=True)
+    sed('/etc/nginx/sites-available/default','IP_ADDRESS', env[env.host_string], use_sudo=True)
+    upload_template('.\\nginx-app\\wp-super-cache.conf.txt', '/etc/nginx/wp-super-cache.conf', use_sudo=True)
+    upload_template('.\\nginx-app\\nginx.conf.txt', '/etc/nginx/nginx.conf', use_sudo=True)
+    upload_template('.\\nginx-app\\php-fpm.conf.txt', '/etc/php/etc/php-fpm.conf', use_sudo=True)
+    runcmd('service php-fpm restart')
+    runcmd('service nginx restart')
+    
+def get_php_from_source():
+    runcmd('mkdir ~/temp_space')
+    with cd('~/temp_space'):
+        runcmd('wget http://in3.php.net/get/php-5.3.3.tar.gz/from/us.php.net/mirror')
+        runcmd('tar xzvf mirror')
+        with cd('php-5.3.3'):
+            runcmd('./configure --prefix=/etc/php --with-config-file-path=/etc/php --with-curl --with-pear --with-gd --with-jpeg-dir --with-png-dir --with-zlib --with-xpm-dir --with-freetype-dir --with-t1lib --with-mcrypt --with-mhash --with-mysql --with-mysqli --with-pdo-mysql --with-openssl --with-xmlrpc --with-xsl --with-bz2 --with-gettext --with-fpm-user=www-data --with-fpm-group=www-data --enable-fpm --enable-exif --enable-wddx --enable-zip --enable-bcmath --enable-calendar --enable-ftp --enable-mbstring --enable-soap --enable-sockets --enable-sqlite-utf8 --enable-shmop --enable-dba --enable-sysvmsg --enable-sysvsem --enable-sysvshm')
+            runcmd('make && make install')
+            runcmd('mkdir /var/log/php-fpm')
+            runcmd('chown -R www-data:www-data /var/log/php-fpm')
+            runcmd('cp -f php.ini-production /etc/php/php.ini')
+            runcmd('chmod 644 /etc/php/php.ini')
+            runcmd('cp /etc/php/etc/php-fpm.conf.default /etc/php/etc/php-fpm.conf')
+            runcmd('cp -f sapi/fpm/init.d.php-fpm /etc/init.d/php-fpm')
+            runcmd('chmod 755 /etc/init.d/php-fpm')
+            runcmd('update-rc.d -f php-fpm defaults')         
+
+def install_nginx_required_libs():
+    runcmd('apt-get -y install htop binutils cpp flex gcc libarchive-zip-perl libc6-dev libcompress-zlib-perl m4 libpcre3 libpcre3-dev libssl-dev libpopt-dev lynx make perl perl-modules openssl unzip zip autoconf2.13 gnu-standards automake libtool bison build-essential zlib1g-dev ntp ntpdate autotools-dev g++ bc subversion psmisc libmysqlclient-dev libcurl4-openssl-dev libjpeg62-dev libpng3-dev libxpm-dev libfreetype6-dev libt1-dev libmcrypt-dev libxslt1-dev libbz2-dev libxml2-dev libevent-dev libltdl-dev libmagickwand-dev imagemagick')
     
 @roles('app')
 def deploy_app_servers():
@@ -50,13 +103,13 @@ def deploy_app_servers():
     port 8200.  Then deploy our Wordpress install, which
     has already been skinned setup, and stored at github.
     """
-    prompt('Specify db password: ', 'db_password')
+    prompt('Specify db password: ', 'db_password')  
     install_apache()
     install_git()
     install_mail()
     install_ftp()    
     setup_website_as_upstream_server('codebetter.com',
-                                     env.host_string,
+                                     '10.180.165.219',
                                      env.roledefs['prx'][0])
     copy_git_website('codebetter.com',
                      'git://github.com/btompkins/CodeBetter.Com-Wordpress.git',
@@ -78,12 +131,12 @@ def deploy_reverse_proxy():
     """
     install_nginx()
     configure_nginx_proxy()
-    configure_nginx_proxy_upstream(env.roledefs['app'][0])
-    configure_nginx_proxy_upstream(env.roledefs['app'][1])
+    configure_nginx_proxy_upstream(env.privateips[env.roledefs['app'][0]])
+    configure_nginx_proxy_upstream(env.privateips[env.roledefs['app'][1]])
     install_munin_node()
     runcmd('restart munin-node')
     
-@roles('db')
+@roles('nginx')
 def deploy_db_server():
     """
     Setup apache, mysql, and phpmyadmin, git
@@ -101,7 +154,7 @@ def deploy_db_server():
                     env.new_password)    
     copy_git_database('wp_codebetter',
                       'git://github.com/btompkins/CodeBetter.Com-MySql.git')
-    setup_mysql_remote_access('184.106.0.0/16', env.host_string)
+    setup_mysql_remote_access('10.180.0.0/16', env.host_string)
     install_munin_node()
     runcmd('ln -s /usr/share/munin/plugins/mysql_bytes /etc/munin/plugins/mysql_bytes')
     runcmd('ln -s /usr/share/munin/plugins/mysql_queries /etc/munin/plugins/mysql_queries')
@@ -126,17 +179,17 @@ def install_munin_server():
            '/etc/munin/munin.conf', use_sudo=True)           
     append(['',            
             '[app1.codebetter.com]',
-            'address {address}'.format(address=env.roledefs['app'][0]),
+            'address {address}'.format(address=env.roledefs['apppriv'][0]),
             ' use_node_name yes'],
            '/etc/munin/munin.conf', use_sudo=True)
     append(['',            
             '[app2.codebetter.com]',
-            'address {address}'.format(address=env.roledefs['app'][1]),
+            'address {address}'.format(address=env.roledefs['apppriv'][1]),
             '  use_node_name yes'],
            '/etc/munin/munin.conf', use_sudo=True)
     append(['',            
             '[mysql.codebetter.com]',
-            'address {address}'.format(address=env.roledefs['db'][0]),
+            'address {address}'.format(address=env.roledefs['dbpriv'][0]),
             '   use_node_name yes'],
            '/etc/munin/munin.conf', use_sudo=True)
 
@@ -251,7 +304,6 @@ def install_ftp():
     runcmd('sudo /etc/init.d/vsftpd start')
 
 def setup_website(domain_name):
-    runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
     runcmd('touch /etc/apache2/sites-enabled/{domain}'.format(
         domain=domain_name))
     append(['NameVirtualHost *:80',
@@ -274,7 +326,6 @@ def setup_website(domain_name):
 
 def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
     runcmd('apt-get -y install libapache2-mod-rpaf')
-    runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
     runcmd('rm /etc/apache2/sites-enabled/000-default')
     upload_template('.\\apache-default-upstream-proxy.txt',
                     '/etc/apache2/sites-enabled/{domain}'.format(
@@ -318,6 +369,7 @@ def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
 
 def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password,
                      database_host):
+    runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
@@ -332,6 +384,8 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
             'SITE_DOMAIN', domain_name, use_sudo=True)
     with cd('/var/www/'):
         runcmd('chown www-data {domain} -fR'.format(domain=domain_name))
+
+def restart_apache():
         runcmd('/etc/init.d/apache2 restart')
 
 
