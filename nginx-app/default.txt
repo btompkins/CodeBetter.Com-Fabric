@@ -1,0 +1,83 @@
+server {
+    
+	listen   8200;
+    server_name  IP_ADDRESS;
+	root /var/www/codebetter.com;
+
+	location = /favicon.ico {
+		log_not_found off;
+		access_log off;
+	}
+
+	location = /robots.txt {
+		allow all;
+		log_not_found off;
+		access_log off;
+	}
+
+	# Deny all attempts to access hidden files such as .htaccess, .htpasswd, .DS_Store (Mac).
+	location ~ /\. {
+		deny all;
+		access_log off;
+		log_not_found off;
+	}
+
+	location / {
+	index index.php;
+		# if the requested file exists, return it immediately
+		if (-f $request_filename) {
+			break;
+		}
+
+		# all other requests go to WordPress
+		if (!-e $request_filename) {
+			rewrite . /index.php last;
+		}
+	}
+
+	## Images and static content is treated different
+    location ~* ^.+.(jpg|jpeg|gif|css|png|js|ico|xml)$ {
+      access_log        off;
+      expires           30d;
+	  rewrite /files/(.+)$ /wp-includes/ms-files.php?file=$1 last; 
+    }
+
+	# Add trailing slash to */wp-admin requests.
+	rewrite /wp-admin$ $scheme://$host$uri/ permanent;
+
+	# Rewrite multisite '.../wp-.*' and '.../*.php'.
+	if (!-e $request_filename) {
+		rewrite ^/[_0-9a-zA-Z-]+(/wp-.*) $1 last;
+		rewrite ^/[_0-9a-zA-Z-]+(/.*\.php)$ $1 last;
+	}
+	
+	# Uncomment one of the lines below for the appropriate caching plugin (if used).
+	include /etc/nginx/wp-super-cache.conf;
+	
+	## Parse all .php file in the /var/www directory
+    location ~ .php$ {
+        fastcgi_split_path_info ^(.+\.php)(.*)$;
+        fastcgi_pass   backend;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME  /var/www/codebetter.com$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_param  QUERY_STRING     $query_string;
+        fastcgi_param  REQUEST_METHOD   $request_method;
+        fastcgi_param  CONTENT_TYPE     $content_type;
+        fastcgi_param  CONTENT_LENGTH   $content_length;
+        fastcgi_intercept_errors        on;
+        fastcgi_ignore_client_abort     on;
+        fastcgi_read_timeout 180;
+
+    }
+    
+    ## Disable viewing .htaccess & .htpassword
+    location ~ /\.ht {
+        deny  all;
+    }
+}
+
+upstream backend {
+        server 127.0.0.1:9000;
+
+}
