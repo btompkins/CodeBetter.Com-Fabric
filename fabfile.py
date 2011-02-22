@@ -372,6 +372,8 @@ def copy_git_website(domain_name, repository_uri, database_name, database_user, 
     runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
+		upload_template('.\\nginx-app\\wp-config.php.txt', 
+		'/var/www/{domain}/wp-config.php'.format(domain=domain_name)', use_sudo=True)
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
             'DATABASE_NAME', database_name, use_sudo=True)
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
