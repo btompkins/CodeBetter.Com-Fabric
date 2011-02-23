@@ -370,10 +370,11 @@ def setup_website_as_upstream_server(domain_name, ip_address, reverse_proxy_ip):
 def copy_git_website(domain_name, repository_uri, database_name, database_user, database_password,
                      database_host):
     runcmd('mkdir /var/www/{domain}'.format(domain=domain_name))
+    upload_template('.\\nginx-app\\wp-config.php.txt',
+                    '/var/www/{domain}/wp-config.php'.format(domain=domain_name),
+                    use_sudo=True)    
     with cd('/var/www/{domain}'.format(domain=domain_name)):
         runcmd('git clone {repo} .'.format(repo=repository_uri))
-		upload_template('.\\nginx-app\\wp-config.php.txt', 
-		'/var/www/{domain}/wp-config.php'.format(domain=domain_name)', use_sudo=True)
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
             'DATABASE_NAME', database_name, use_sudo=True)
         sed('/var/www/{domain}/wp-config.php'.format(domain=domain_name),
